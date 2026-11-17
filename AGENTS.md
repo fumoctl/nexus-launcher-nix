@@ -34,14 +34,20 @@ The flake never fetches anything unpinned at build time:
 
 ## Critical Packaging Notes
 
-### 1. FHS environment (`appimageTools.wrapType2`)
-At runtime the launcher downloads and runs a **Nexus backend** binary and **Nexus Runtime** families (a Proton fork) into the user's home directory. All of these run inside the bubblewrap FHS environment created by `wrapType2`, so their library needs must be met by the environment:
+### 1. FHS environment (`buildFHSEnv`, not `wrapType2`)
+At runtime the launcher downloads and runs a **Nexus backend** binary and **Nexus Runtime** families (a Proton fork) into the user's home directory. All of these run inside the bubblewrap FHS environment, so their library needs must be met by the environment.
+
+The package calls `buildFHSEnv` directly, with `appimageTools.defaultFhsEnvArgs` and `appimageTools.appimage-exec` (the same pieces `wrapType2` uses). **Do not switch back to `appimageTools.wrapType2`/`wrapAppImage`.** They merge their default `multiPkgs` *over* the caller's, which silently drops the Wine libraries.
+
+*   **Wine/Proton libraries (`multiPkgs`, 64- and 32-bit)**: Proton normally gets these from the Steam Runtime. Wine `dlopen()`s `gnutls`, `libgcrypt`, `krb5`, `pcsclite`, `libv4l` and `unixodbc`. Without gnutls, `bcrypt` has no crypto support and Nexus package registration fails (`hr=80004005`, exit code 70). Libraries bundled with the runtime (GStreamer, libsoup, vosk) also need `libva`, `nghttp2`, `libpsl`, `sqlite`, `libopus`, `blas` and `lapack`.
+*   Wrap `multiPkgs` entries in **`lib.getLib`**. For multi-output packages, `buildFHSEnv` only links `meta.outputsToInstall` (often `bin`/`man`), so the shared libraries would otherwise be missing from `/usr/lib*`.
 *   The backend needs OpenSSL 3, `libdbus-1`, and the GCC runtime (`libstdc++`, `libgcc_s`).
 *   Keyring handling calls `busctl`, `/usr/bin/systemd-run` and `kreadconfig`, so `systemd` and `kdePackages.kconfig` are included.
 *   Runtime archives are unpacked with `tar`/`xz`, and partly with `python3`.
-*   The optional overlay runs `/usr/bin/python3` with PyGObject, GTK 3 and WebKitGTK 4.1. `GI_TYPELIB_PATH` is set in the FHS `profile` so GObject introspection finds the typelibs under `/usr/lib/girepository-1.0`.
-*   `multiArch` (argument `enable32Bit`, default `true`) adds 32-bit versions of the AppImage libraries on x86_64 for Wine/Proton.
-*   GPU drivers come from the host (`/run/opengl-driver`). **Do not** add `mesa` to `extraPkgs`.
+*   The optional overlay runs `/usr/bin/python3` with PyGObject, GTK 3, WebKitGTK 4.1 (+ libsoup 3) and gtk-layer-shell. `GI_TYPELIB_PATH` is set in the FHS `profile` so GObject introspection finds the typelibs under `/usr/lib/girepository-1.0`.
+*   `multiArch` (argument `enable32Bit`, default `true`) adds 32-bit versions of `multiPkgs` on x86_64 for Wine/Proton.
+*   GPU drivers come from the host (`/run/opengl-driver`). **Do not** add `mesa` to the environment.
+*   To check a newly installed runtime for missing libraries, run commands inside the env with `APPIMAGE_DEBUG_EXEC=/path/to/script nexus-launcher`. Run `ldd` on `~/.local/share/xodus-nexus/runtimes/variants/*/releases/*/files/lib/wine/{x86_64,i386}-unix/*.so`. Also compare the `lib*.so*` strings in those files (which Wine `dlopen()`s) against `/usr/lib64` and `/usr/lib32`.
 
 ### 2. Launcher wrapper (`$APPIMAGE`)
 Upstream reads `$APPIMAGE` for two things:

@@ -3,6 +3,7 @@
   stdenv,
   fetchurl,
   appimageTools,
+  buildFHSEnv,
   makeDesktopItem,
   writeShellScriptBin,
   runtimeShell,
@@ -73,14 +74,53 @@ let
     startupWMClass = "Nexus Launcher";
   };
 in
-appimageTools.wrapType2 {
-  inherit pname version src;
+# This is what appimageTools.wrapType2 does, but calling buildFHSEnv directly:
+# wrapType2/wrapAppImage merge their default `multiPkgs` *over* the caller's,
+# which would silently drop the Wine libraries below.
+buildFHSEnv {
+  inherit pname version;
+
+  runScript = "appimage-exec.sh -w ${appimageContents} --";
 
   multiArch = enable32Bit;
 
-  extraPkgs =
+  # Libraries the Nexus Runtime (Proton/Wine) loads from the host. Proton
+  # normally gets these from the Steam Runtime; here they must come from the
+  # FHS env, in both 64-bit and (with multiArch) 32-bit flavours.
+  #
+  # `lib.getLib` is needed because for multi-output packages buildFHSEnv only
+  # links `meta.outputsToInstall` (often just `bin`/`man`), leaving the shared
+  # libraries out of /usr/lib*.
+  multiPkgs =
     pkgs:
-    (with pkgs; [
+    appimageTools.defaultFhsEnvArgs.multiPkgs pkgs
+    ++ map lib.getLib (
+      with pkgs;
+      [
+        # dlopen()ed by Wine's unix libraries
+        gnutls # bcrypt/crypt32/secur32: TLS & crypto (package registration fails without it)
+        libgcrypt # bcrypt
+        krb5 # kerberos/secur32
+        pcsclite # winscard
+        libv4l # avicap32/qcap
+        unixodbc # odbc32
+
+        # Needed by libraries bundled with the runtime (GStreamer, libsoup, vosk)
+        libva
+        nghttp2
+        libpsl
+        sqlite
+        libopus
+        blas
+        lapack
+      ]
+    );
+
+  targetPkgs =
+    pkgs:
+    [ appimageTools.appimage-exec ]
+    ++ appimageTools.defaultFhsEnvArgs.targetPkgs pkgs
+    ++ (with pkgs; [
       # Nexus backend (Rust binary downloaded at first start)
       openssl
       dbus
@@ -106,11 +146,6 @@ appimageTools.wrapType2 {
       libsoup_3
       gtk-layer-shell
       libnotify
-
-      # Graphics for games started through the Nexus Runtime (vulkan-loader,
-      # libGL, PipeWire and PulseAudio are already in the default AppImage env;
-      # GPU drivers come from the host via /run/opengl-driver).
-      libva
 
       steamShim
     ])
@@ -164,7 +199,7 @@ appimageTools.wrapType2 {
   '';
 
   passthru = {
-    inherit appimageContents;
+    inherit src appimageContents;
   };
 
   meta = {

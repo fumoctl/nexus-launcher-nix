@@ -113,7 +113,7 @@ nexus-launcher.override {
 
 ## NixOS Notes
 
-- **Sandbox**: The AppImage runs inside a `bubblewrap` FHS environment (`appimageTools.wrapType2`). Everything the launcher downloads at runtime — the Nexus backend and the Nexus Runtime families — runs inside that same environment, which provides glibc ≥ 2.38, OpenSSL 3, D-Bus, GCC runtime libraries and the usual AppImage/Steam libraries.
+- **Sandbox**: The AppImage runs inside a `bubblewrap` FHS environment (`buildFHSEnv`, like `appimageTools.wrapType2`). Everything the launcher downloads at runtime — the Nexus backend and the Nexus Runtime families — runs inside that same environment, which provides glibc ≥ 2.38, OpenSSL 3, D-Bus, GCC runtime libraries, the usual AppImage libraries, and the 64- and 32-bit libraries Wine loads (gnutls, krb5, pcsclite, …) that Proton normally gets from the Steam Runtime.
 - **Keyring**: Sign-in credentials are stored through the Secret Service D-Bus API. Make sure a provider is running, e.g. `services.gnome.gnome-keyring.enable = true;` or KDE Wallet on Plasma.
 - **In-app updates** are disabled (the AppImage lives in the read-only Nix store). Update the flake input instead; the launcher still notifies you when a new version is out. The backend and runtimes are still updated from the launcher's Settings, because they live in your home directory.
 - **Game shortcuts / Add to Steam**: The wrapper passes the path it was started from (for example `/run/current-system/sw/bin/nexus-launcher`) to the launcher, so generated shortcuts survive package updates. Shortcuts created while running from a `/nix/store` path (e.g. via `nix run`) break after garbage collection.
