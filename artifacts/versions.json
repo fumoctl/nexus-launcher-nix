@@ -1,0 +1,13 @@
+{
+  "Nexus Launcher": {
+    "version": "0.5.0",
+    "x86_64-linux": {
+      "url": "https://github.com/domsvoboda/nexus-launcher/releases/download/v0.5.0/Xodus-Nexus-0.5.0-x86_64.AppImage",
+      "hash": "1zrklrsx7sbwhqifhq2h2375ykc28idhirkkav65sd10vd52ja4s"
+    },
+    "aarch64-linux": {
+      "url": "https://github.com/domsvoboda/nexus-launcher/releases/download/v0.5.0/Xodus-Nexus-0.5.0-arm64.AppImage",
+      "hash": "0zq3qqw1ay758zj1hwrabvg33vr9940y9x833ynwmpxlaj9fnsrb"
+    }
+  }
+}

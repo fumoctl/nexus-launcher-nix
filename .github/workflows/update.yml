@@ -1,0 +1,146 @@
+name: Update Nexus Launcher
+
+on:
+  schedule:
+    # Run daily at 07:00 UTC
+    - cron: '0 7 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        env:
+          DISABLE_FLAKEHUB: "true"
+        with:
+          flakehub: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run update script
+        id: update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/update-version.sh
+          if ./scripts/update-version.sh 2>&1 | tee update_output.txt; then
+            echo "update_success=true" >> "$GITHUB_OUTPUT"
+            if git diff --quiet artifacts/versions.json; then
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            else
+              VERSION=$(jq -r '."Nexus Launcher".version' artifacts/versions.json)
+              echo "Detected version: $VERSION"
+              echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "update_success=false" >> "$GITHUB_OUTPUT"
+            echo "=== Update script failed ==="
+            cat update_output.txt
+            exit 1
+          fi
+          rm -f update_output.txt
+
+      - name: Verify packages build
+        if: steps.update.outputs.has_changes == 'true'
+        run: |
+          echo "Running flake check..."
+          nix flake check
+          echo "Building updated package (verifies the new hashes before opening a PR)..."
+          nix build .#default .#nexus-launcher --no-link --print-build-logs
+
+      - name: Create Pull Request
+        if: steps.update.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update nexus-launcher to ${{ steps.update.outputs.new_version }}"
+          title: "chore: update nexus-launcher to ${{ steps.update.outputs.new_version }}"
+          body: |
+            ## Nexus Launcher Update
+            This PR updates the Nexus Launcher Nix flake package.
+
+            - **Nexus Launcher**: `${{ steps.update.outputs.new_version }}`
+            - Release notes: https://github.com/domsvoboda/nexus-launcher/releases/tag/v${{ steps.update.outputs.new_version }}
+
+            ### Changes
+            - Updated version, URLs and hashes in `artifacts/versions.json`
+
+            ### Testing
+            - ✅ AppImages verified against upstream `.sha512sum` files
+            - ✅ Flake checks passed (`nix flake check`)
+            - ✅ Built package successfully
+
+            ---
+            🤖 This PR was created automatically by the auto-update workflow.
+          branch: auto-update/nexus-launcher-${{ steps.update.outputs.new_version }}
+          delete-branch: true
+          labels: |
+            automated
+            nexus-launcher-update
+
+      - name: Enable auto-merge
+        if: steps.update.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.update.outputs.new_version }}
+        run: |
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          WAIT_TIME=5
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Looking for PR..."
+            PR_NUMBER=$(gh pr list --head "auto-update/nexus-launcher-$NEW_VERSION" --json number --jq '.[0].number')
+            if [ -n "$PR_NUMBER" ]; then
+              echo "Found PR #$PR_NUMBER"
+              if gh pr merge "$PR_NUMBER" --auto --squash; then
+                echo "✓ Auto-merge enabled for PR #$PR_NUMBER"
+              else
+                echo "⚠ Failed to enable auto-merge (auto-merge may not be enabled in repository settings), but PR exists"
+              fi
+              exit 0
+            fi
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "PR not found yet, waiting ${WAIT_TIME}s before retry..."
+              sleep $WAIT_TIME
+              WAIT_TIME=$((WAIT_TIME * 2))
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+          echo "⚠ Could not find PR after $MAX_ATTEMPTS attempts"
+
+      - name: Report status
+        if: always()
+        env:
+          UPDATE_SUCCESS: ${{ steps.update.outputs.update_success }}
+          HAS_CHANGES: ${{ steps.update.outputs.has_changes }}
+          NEW_VERSION: ${{ steps.update.outputs.new_version }}
+        run: |
+          if [[ "$UPDATE_SUCCESS" == "true" ]]; then
+            if [[ "$HAS_CHANGES" == "true" ]]; then
+              echo "✅ Update successful! Nexus Launcher: $NEW_VERSION"
+            else
+              echo "✅ Already at latest version"
+            fi
+          else
+            echo "❌ Update failed"
+            exit 1
+          fi

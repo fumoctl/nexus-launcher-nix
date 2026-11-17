@@ -1,0 +1,7 @@
+result
+result-*
+*.AppImage
+*.appimage
+.direnv/
+.env
+scratch/

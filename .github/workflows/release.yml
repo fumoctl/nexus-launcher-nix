@@ -1,0 +1,84 @@
+name: Create Release
+
+on:
+  # Trigger when Update workflow completes (bypasses GITHUB_TOKEN limitation)
+  workflow_run:
+    workflows: ["Update Nexus Launcher"]
+    types:
+      - completed
+  # Trigger for direct pushes / PR merges touching versions.json
+  push:
+    branches:
+      - main
+    paths:
+      - "artifacts/versions.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 2
+
+      - name: Check if release needed
+        id: release_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(jq -r '."Nexus Launcher".version' artifacts/versions.json)
+          TAG_NAME="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION, Tag: $TAG_NAME"
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG_NAME already exists, skipping"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG_NAME does not exist, will create"
+          fi
+
+      - name: Create release
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release_check.outputs.tag_name }}
+          VERSION: ${{ steps.release_check.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG_NAME" -m "Nexus Launcher v$VERSION"
+          git push origin "$TAG_NAME"
+          gh release create "$TAG_NAME" \
+            --title "Nexus Launcher v$VERSION" \
+            --notes "Auto-updated Nexus Launcher package.
+
+          | Component | Version |
+          | --- | --- |
+          | Nexus Launcher (\`nexus-launcher\`) | $VERSION |
+
+          Upstream release notes: https://github.com/domsvoboda/nexus-launcher/releases/tag/v$VERSION
+
+          ## Installation
+          \`\`\`nix
+          inputs.nexus-launcher-nix.url = \"github:$REPO/$TAG_NAME\";
+          \`\`\`
+
+          ## Notes
+          - 📦 Multi-platform: Linux (x86_64, aarch64 when published upstream)
+          - ✅ Hashes verified by build before release"
+          echo "✓ Created release $TAG_NAME"
